@@ -42,6 +42,59 @@ GROUP BY data_compra
 ORDER BY data_compra ASC;
 
 
+--crescimento mês a mês e variação
+WITH RECURSIVE calendario(mes) AS (
+
+    SELECT DATE(
+        MIN(substr(order_purchase_timestamp, 1, 7)) || '-01'  )
+    FROM orders
+
+    UNION ALL
+
+    SELECT DATE(mes, '+1 month')
+    FROM calendario
+    WHERE mes < (
+        SELECT DATE(
+            MAX(substr(order_purchase_timestamp, 1, 7)) || '-01' )
+        FROM orders
+    )
+    ),
+crescimento AS (
+
+SELECT  
+    DISTINCT (COUNT(t1.order_id)) AS vendas , 
+    substr(order_purchase_timestamp, 1 ,7) AS data,
+    ROUND(SUM(price + freight_value), 2) AS valor_total
+FROM orders AS t1
+
+INNER JOIN order_items AS t2
+ON t1.order_id = t2.order_id
+WHERE order_status = 'delivered'
+
+GROUP BY substr(order_purchase_timestamp, 1 ,7)
+
+),
+vendas_mes AS (
+SELECT 
+    strftime('%Y-%m', mes) AS data,
+    CASE
+        WHEN valor_total IS NULL THEN 0
+        ELSE valor_total
+    END AS valor_total
+FROM calendario AS t1
+
+LEFT JOIN crescimento AS t2
+ON data = strftime('%Y-%m', mes) 
+ORDER BY data ASC
+)
+SELECT 
+    data,
+    valor_total,
+    LAG(valor_total) OVER (ORDER BY data) AS mes_anterior, 
+    ROUND(100 * (valor_total - LAG(valor_total) OVER (ORDER BY data)) / NULLIF(LAG(valor_total) OVER (ORDER BY data),0), 2) AS variacao
+FROM vendas_mes
+
+
 -- pedidos entregues por mês de compra;
 WITH RECURSIVE calendario(mes) AS (
 
@@ -126,8 +179,9 @@ FROM calendario AS t1
 
 LEFT JOIN entregues AS t2
     ON data_compra = strftime('%Y-%m', mes)
+    
 
---crescimento mês a mês e variação
+-- valor total itens com frete
 WITH RECURSIVE calendario(mes) AS (
 
     SELECT DATE(
@@ -143,40 +197,36 @@ WITH RECURSIVE calendario(mes) AS (
             MAX(substr(order_purchase_timestamp, 1, 7)) || '-01' )
         FROM orders
     )
-    ),
-crescimento AS (
-
-SELECT  
-    DISTINCT (COUNT(t1.order_id)) AS vendas , 
-    substr(order_purchase_timestamp, 1 ,7) AS data,
-    ROUND(SUM(price + freight_value), 2) AS valor_total
-FROM orders AS t1
-
-INNER JOIN order_items AS t2
-ON t1.order_id = t2.order_id
-WHERE order_status = 'delivered'
-
-GROUP BY substr(order_purchase_timestamp, 1 ,7)
-
 ),
-vendas_mes AS (
-SELECT 
+tb_join AS (
+    SELECT 
+    COUNT(t1.order_id) AS pedidos_entregues, 
+    substr(order_purchase_timestamp, 1,7) AS data_venda, 
+    ROUND(SUM(t2.price) + SUM(t2.freight_value), 2) AS valor_com_frete
+    FROM orders AS t1
+
+    LEFT JOIN order_items AS t2
+    ON t1.order_id = t2.order_id
+
+    WHERE order_status = 'delivered'
+    GROUP BY substr(order_purchase_timestamp, 1,7)
+    ORDER BY data_venda
+)
+SELECT  
     strftime('%Y-%m', mes) AS data,
     CASE
-        WHEN valor_total IS NULL THEN 0
-        ELSE valor_total
-    END AS valor_total
-FROM calendario AS t1
+        WHEN pedidos_entregues IS NULL THEN 'Sem pedidos entregues'
+        ELSE pedidos_entregues
+    END AS pedidos_entregues,
+   
+    CASE
+        WHEN valor_com_frete IS NULL THEN 0
+        ELSE valor_com_frete
+    END AS valor_com_frete
 
-LEFT JOIN crescimento AS t2
-ON data = strftime('%Y-%m', mes) 
-ORDER BY data ASC
-)
-SELECT 
-    data,
-    valor_total,
-    LAG(valor_total) OVER (ORDER BY data) AS mes_anterior, 
-    ROUND(100 * (valor_total - LAG(valor_total) OVER (ORDER BY data)) / NULLIF(LAG(valor_total) OVER (ORDER BY data),0), 2) AS variacao
-FROM vendas_mes
 
     
+FROM calendario AS t1
+
+LEFT JOIN tb_join AS t2
+ON data_venda = strftime('%Y-%m', mes)
