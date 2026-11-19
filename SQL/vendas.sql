@@ -155,10 +155,10 @@ WITH RECURSIVE calendario(mes) AS (
         FROM orders
     )
 ),
-entregues AS (
+realizados AS (
 SELECT 
     substr(order_purchase_timestamp,1 , 7) AS data_compra,
-    COUNT(order_id) AS pedidos_realizados
+    COUNT(DISTINCT order_id) AS pedidos_realizados
 
 FROM orders
 
@@ -230,3 +230,54 @@ FROM calendario AS t1
 
 LEFT JOIN tb_join AS t2
 ON data_venda = strftime('%Y-%m', mes)
+
+--variaçao
+WITH RECURSIVE calendario(mes) AS (
+
+    SELECT DATE(
+        MIN(substr(order_purchase_timestamp, 1, 7)) || '-01'  )
+    FROM orders
+
+    UNION ALL
+
+    SELECT DATE(mes, '+1 month')
+    FROM calendario
+    WHERE mes < (
+        SELECT DATE(
+            MAX(substr(order_purchase_timestamp, 1, 7)) || '-01' )
+        FROM orders
+    )
+),
+tb_join AS (
+    SELECT 
+    COUNT(DISTINCT t1.order_id) AS pedidos_entregues, 
+    substr(t1.order_purchase_timestamp, 1,7) AS data_venda, 
+    ROUND(SUM(t2.price) + SUM(t2.freight_value), 2) AS valor_com_frete
+    FROM orders AS t1
+
+    LEFT JOIN order_items AS t2
+    ON t1.order_id = t2.order_id
+
+    WHERE t1.order_status = 'delivered'
+    GROUP BY substr(order_purchase_timestamp, 1,7)
+    ORDER BY data_venda
+)
+SELECT  
+    strftime('%Y-%m', mes) AS data,
+    CASE
+        WHEN pedidos_entregues IS NULL THEN 'Sem pedidos entregues'
+        ELSE pedidos_entregues
+    END AS pedidos_entregues,
+    
+    valor_com_frete,
+    LAG(valor_com_frete) OVER (ORDER BY strftime('%Y-%m', mes)) AS mes_anterior,
+    ROUND(valor_com_frete - LAG(valor_com_frete) OVER (ORDER BY strftime('%Y-%m', mes)), 2) AS variacao_absoluta,
+    
+    ROUND(100*(valor_com_frete - LAG(valor_com_frete) OVER (ORDER BY strftime('%Y-%m', mes))) / LAG(valor_com_frete) OVER (ORDER BY strftime('%Y-%m', mes)), 2) AS variacao_mensal
+FROM calendario AS t1
+
+LEFT JOIN tb_join AS t2
+ON data_venda = strftime('%Y-%m', mes)
+ORDER BY data ASC
+
+
